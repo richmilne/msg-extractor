@@ -346,7 +346,7 @@ class Message(OleFile.OleFileIO):
 
             return self._attachments
 
-    def save(self, raw=False):
+    def save(self, filename, useFileName=False, toJson=False):
 
         if useFileName:
             # strip out the extension
@@ -368,7 +368,6 @@ class Message(OleFile.OleFileIO):
 
         def addNumToDir(dirName):
             # Attempt to create the directory with a '(n)' appended
-
             for i in range(2, 100):
                 try:
                     newDirName = dirName + " (" + str(i) + ")"
@@ -428,7 +427,7 @@ class Message(OleFile.OleFileIO):
                 f.write("Date: " + xstr(self.date) + "\n")
                 f.write("-----------------\n\n")
                 f.write(self.body)
-                
+
             f.close()
 
         except Exception:
@@ -508,28 +507,28 @@ Usage:  <file> [file2 ...]
 """)
         sys.exit()
 
-    writeRaw = False
-    toJson = False
-    useFileName = False
+    writeRaw_ = False
+    toJson_ = False
+    useFileName_ = False
 
     for rawFilename in sys.argv[1:]:
         if rawFilename == '--raw':
-            writeRaw = True
+            writeRaw_ = True
 
         if rawFilename == '--json':
-            toJson = True
+            toJson_ = True
 
         if rawFilename == '--use-file-name':
-            useFileName = True
+            useFileName_ = True
 
-        for filename in glob.glob(rawFilename):
-            msg = Message(filename)
+        for filename_ in glob.glob(rawFilename):
+            msg = Message(filename_)
             try:
-                if writeRaw:
+                if writeRaw_:
                     msg.saveRaw()
                 else:
-                    msg.save()
+                    msg.save(filename_, useFileName_, toJson_)
             except Exception:
                 # msg.debug()
-                print("Error with file '" + filename + "': " +
+                print("Error with file '" + filename_ + "': " +
                       traceback.format_exc())
