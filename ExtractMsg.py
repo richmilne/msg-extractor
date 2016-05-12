@@ -1,11 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: latin-1 -*-
 """
-ExtractMsg:
-    Extracts emails and attachments saved in Microsoft Outlook's .msg files
-
-https://github.com/mattgwwalker/msg-extractor
-"""
+Extracts emails and attachments saved in Microsoft Outlook's .msg files
+    https://github.com/mattgwwalker/msg-extractor"""
 
 __author__ = "Matthew Walker"
 __date__ = "2013-11-19"
@@ -28,13 +25,18 @@ __version__ = '0.2'
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
-import sys
-import glob
-import traceback
-from email.parser import Parser as EmailParser
+import argparse
 import email.utils
+import glob
+import json
 import olefile as OleFile
+import os
+import random
+import string
+import sys
+import traceback
+
+from email.parser import Parser as EmailParser
 
 # This property information was sourced from
 # http://www.fileformat.info/format/outlookmsg/index.htm
@@ -407,7 +409,6 @@ class Message(OleFile.OleFileIO):
                 attachmentNames.append(attachment.save())
 
             if toJson:
-                import json
                 from imapclient.imapclient import decode_utf7
 
                 emailObj = {'from': xstr(self.sender),
@@ -490,44 +491,48 @@ class Message(OleFile.OleFileIO):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) <= 1:
-        print(__doc__)
-        print("""
+
+    epilogue = """
 Launched from command line, this script parses Microsoft Outlook Message files
-and save their contents to the current directory.  On error the script will
-write out a 'raw' directory will all the details from the file, but in a
-less-than-desirable format. To force this mode, the flag '--raw'
-can be specified.
+and saves their contents to the current directory. On error the script will
+write out a 'raw' directory with all the details from the file, but in a
+less-than-desirable format. To force this mode, use the '--raw' flag."""
 
-Usage:  <file> [file2 ...]
-   or:  --raw <file>
-   or:  --json
+    parser = argparse.ArgumentParser(
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+             description =__doc__,
+             epilog=epilogue)
 
-   to name the directory as the .msg file, --use-file-name
-""")
-        sys.exit()
+    parser.add_argument('--raw',
+                        dest='writeRaw_',
+                        action='store_true',
+                        help="See main description below.")
 
-    writeRaw_ = False
-    toJson_ = False
-    useFileName_ = False
+    parser.add_argument('--json',
+                        dest='toJson_',
+                        action='store_true',
+                        help="Save the message body as a JSON object.")
 
-    for rawFilename in sys.argv[1:]:
-        if rawFilename == '--raw':
-            writeRaw_ = True
+    parser.add_argument('--use-file-name',
+                        dest='useFileName_',
+                        action='store_true',
+                        help="The email contents are normally saved in a directory with a name based on the email's date and subject line. Use this switch to create an output directory with the same name (excluding the extension) of the input file.")
 
-        if rawFilename == '--json':
-            toJson_ = True
+    parser.add_argument('msg_paths',
+                        metavar='msg-path',
+                        nargs='+',
+                        help='Path to an Outlook message file.')
 
-        if rawFilename == '--use-file-name':
-            useFileName_ = True
+    args = parser.parse_args()
 
-        for filename_ in glob.glob(rawFilename):
+    for path in args.msg_paths:
+        for filename_ in glob.glob(path):
             msg = Message(filename_)
             try:
-                if writeRaw_:
+                if args.writeRaw_:
                     msg.saveRaw()
                 else:
-                    msg.save(filename_, useFileName_, toJson_)
+                    msg.save(filename_, args.useFileName_, args.toJson_)
             except Exception:
                 # msg.debug()
                 print("Error with file '" + filename_ + "': " +
