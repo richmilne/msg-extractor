@@ -373,7 +373,7 @@ class Message(OleFile.OleFileIO):
                 try:
                     newDirName = dirName + " (" + str(i) + ")"
                     os.makedirs(newDirName)
-                    return dirName
+                    return newDirName
                 except Exception:
                     pass
             return None
