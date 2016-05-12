@@ -34,6 +34,7 @@ import os
 import random
 import string
 import sys
+import tempfile
 import traceback
 
 from email.parser import Parser as EmailParser
@@ -167,7 +168,21 @@ def windowsUnicode(string):
         return unicode(string, 'utf_16_le')
 
 
-class Attachment:
+def createNumDirIfNotExists(baseDir):
+
+    for count in xrange(0, 100):
+        suffix = '-' + str(count).zfill(2) if count else ''
+        newDirName = baseDir + suffix
+        if not os.path.isdir(newDirName):
+            os.makedirs(newDirName)
+            return newDirName
+
+    msg = ("Failed to create a directory based on '%s'. ",
+           "Does it already exist?") % baseDir
+    raise FileIO(msg)
+
+
+class Attachment(object):
     def __init__(self, msg, dir_):
         # Get long filename
         self.longFilename = msg._getStringStream([dir_, '__substg1.0_3707'])
@@ -178,7 +193,7 @@ class Attachment:
         # Get attachment data
         self.data = msg._getStream([dir_, '__substg1.0_37010102'])
 
-    def save(self):
+    def save(self, newDirName):
         # Use long filename as first preference
         filename = self.longFilename
         # Otherwise use the short filename
@@ -186,15 +201,15 @@ class Attachment:
             filename = self.shortFilename
         # Otherwise just make something up!
         if filename is None:
-            import random
-            import string
-            filename = 'UnknownFilename ' + \
-                ''.join(random.choice(string.ascii_uppercase + string.digits)
-                        for _ in range(5)) + ".bin"
-        f = open(filename, 'wb')
+            handle, path = tempfile.mkstemp('.bin', 'UnknownFilename-',
+                                            text=False, dir=newDirName)
+            f = os.fdopen(handle, 'wb')
+        else:
+            path = os.path.join(newDirName, filename)
+            f = open(path, 'wb')
         f.write(self.data)
         f.close()
-        return filename
+        return path
 
 
 class Message(OleFile.OleFileIO):
@@ -348,56 +363,41 @@ class Message(OleFile.OleFileIO):
 
             return self._attachments
 
-    def save(self, filename, useFileName=False, toJson=False):
+    def createBaseDir(self, destDir, useFileName, filename=None):
 
         if useFileName:
-            # strip out the extension
-            dirName = filename.split('/').pop().split('.')[0]
+            assert filename is not None
+            dirName = os.path.splitext(os.path.basename(filename))[0]
         else:
             # Create a directory based on the date and subject of the message
             d = self.parsedDate
-            if d is not None:
-                dirName = '{0:02d}-{1:02d}-{2:02d}_{3:02d}{4:02d}'.format(*d)
-            else:
+            if d is None:
                 dirName = "UnknownDate"
-
-            if self.subject is None:
-                subject = "[No subject]"
             else:
-                subject = "".join(i for i in self.subject if i not in r'\/:*?"<>|')
+                assert isinstance(d, tuple) and len(d) >= 5
+                # year, month, day, hour, min = dateTup
+                dirName = '{0:02d}-{1:02d}-{2:02d}_{3:02d}{4:02d}'.format(*d)
 
-            dirName = dirName + " " + subject
+            subject = self.subject
+            subject = subject if subject else "[No subject]"
 
-        def addNumToDir(dirName):
-            # Attempt to create the directory with a '(n)' appended
-            for i in range(2, 100):
-                try:
-                    newDirName = dirName + " (" + str(i) + ")"
-                    os.makedirs(newDirName)
-                    return newDirName
-                except Exception:
-                    pass
-            return None
+            dirName = dirName + '-' + subject
+
+        dirName = "".join(c for c in dirName if not
+                       (ord(c) < 32 or c in r'\/:*?"<>|'))
+        dirName = os.path.join(destDir, dirName.replace(' ', '-'))
+
+        return createNumDirIfNotExists(dirName)
+
+    def save(self, newDirName, toJson=False):
+
+        assert os.path.isdir(newDirName)
 
         try:
-            os.makedirs(dirName)
-        except Exception:
-            newDirName = addNumToDir(dirName)
-            if newDirName is not None:
-                dirName = newDirName
-            else:
-                raise Exception(
-                    "Failed to create directory '%s'. Does it already exist?" %
-                    dirName
-                    )
-
-        oldDir = os.getcwd()
-        try:
-            os.chdir(dirName)
-
             # Save the message body
             fext = 'json' if toJson else 'text'
-            f = open("message." + fext, "w")
+            filePath = os.path.join(newDirName, "message." + fext)
+            f = open(filePath, "wb")
             # From, to , cc, subject, date
 
             def xstr(s):
@@ -406,7 +406,8 @@ class Message(OleFile.OleFileIO):
             attachmentNames = []
             # Save the attachments
             for attachment in self.attachments:
-                attachmentNames.append(attachment.save())
+                attachName = os.path.basename(attachment.save(newDirName))
+                attachmentNames.append(attachName)
 
             if toJson:
                 from imapclient.imapclient import decode_utf7
@@ -431,49 +432,41 @@ class Message(OleFile.OleFileIO):
 
             f.close()
 
-        except Exception:
-            self.saveRaw()
+        except Exception, e:
+            self.saveRaw(newDirName)
             raise
 
-        finally:
-            # Return to previous directory
-            os.chdir(oldDir)
 
-    def saveRaw(self):
+    def saveRaw(self, newNumDir):
         # Create a 'raw' folder
-        oldDir = os.getcwd()
-        try:
-            rawDir = "raw"
+        rawDir = os.path.join(newNumDir, 'raw')
+        if not os.path.isdir(rawDir):
             os.makedirs(rawDir)
-            os.chdir(rawDir)
-            sysRawDir = os.getcwd()
 
-            # Loop through all the directories
-            for dir_ in self.listdir():
-                sysdir = "/".join(dir_)
-                code = dir_[-1][-8:-4]
-                global properties
-                if code in properties:
-                    sysdir = sysdir + " - " + properties[code]
-                os.makedirs(sysdir)
-                os.chdir(sysdir)
+        # Loop through all the directories
+        for dir_ in self.listdir():
+            sysdir = "/".join(dir_)
+            code = dir_[-1][-8:-4]
+            global properties
+            if code in properties:
+                sysdir = sysdir + " - " + properties[code]
 
-                # Generate appropriate filename
-                if dir_[-1].endswith("001E"):
-                    filename = "contents.txt"
-                else:
-                    filename = "contents"
+            sysdirPath = os.path.join(rawDir, sysdir)
+            if not os.path.isDir(sysdirPath):
+                os.makedirs(sysdirPath)
 
-                # Save contents of directory
-                f = open(filename, 'wb')
-                f.write(self._getStream(dir_))
-                f.close()
+            # Generate appropriate filename
+            if dir_[-1].endswith("001E"):
+                filename = "contents.txt"
+            else:
+                filename = "contents"
 
-                # Return to base directory
-                os.chdir(sysRawDir)
+            filePath = os.path.join(sysdirPath, filename)
 
-        finally:
-            os.chdir(oldDir)
+            # Save contents of directory
+            f = open(filePath, 'wb')
+            f.write(self._getStream(dir_))
+            f.close()
 
     def dump(self):
         # Prints out a summary of the message
@@ -513,10 +506,17 @@ less-than-desirable format. To force this mode, use the '--raw' flag."""
                         action='store_true',
                         help="Save the message body as a JSON object.")
 
+    parser.add_argument('--dest-dir',
+                        dest='destDir_',
+                        metavar='DEST_DIR',
+                        # default= os.path.abspath(os.path.dirname(__file__)),
+                        default=os.getcwd(),
+                        help='The directory (which must exist) where the message details will be saved. Defaults to "%(default)s" (which should be your current directory.)')
+
     parser.add_argument('--use-file-name',
                         dest='useFileName_',
                         action='store_true',
-                        help="The email contents are normally saved in a directory with a name based on the email's date and subject line. Use this switch to create an output directory with the same name (excluding the extension) of the input file.")
+                        help="Email contents are normally saved in a sub-directory of DEST_DIR, named after the email's date and subject. This switch creates a sub-directory based on the name of the input file (excluding extension.)")
 
     parser.add_argument('msg_paths',
                         metavar='msg-path',
@@ -529,10 +529,13 @@ less-than-desirable format. To force this mode, use the '--raw' flag."""
         for filename_ in glob.glob(path):
             msg = Message(filename_)
             try:
+                newDirName = msg.createBaseDir(args.destDir_, args.useFileName_,
+                                               filename_)
                 if args.writeRaw_:
-                    msg.saveRaw()
+                    msg.saveRaw(newDirName)
                 else:
-                    msg.save(filename_, args.useFileName_, args.toJson_)
+                    msg.save(newDirName, args.toJson_)
+                print 'Message extracted to:', newDirName
             except Exception:
                 # msg.debug()
                 print("Error with file '" + filename_ + "': " +
